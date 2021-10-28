@@ -1,11 +1,14 @@
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeApplications  #-}
 {-# LANGUAGE TypeOperators     #-}
 module MyLib where
 
 import           Control.Algebra
+import           Control.Carrier.Lift
 import           Control.Effect.Labelled
 import           Control.Monad.IO.Class
+import           Crypto.Random           (seedFromInteger)
 import qualified Crypto.Random           as CR
 import           CryptoHash
 import qualified Database.SQLite.Simple  as SQL
@@ -76,17 +79,18 @@ loggin username password =  do
 
 example1 :: (Has CryptoHash sig m,
              HasLabelled KVStore
-               (KVStore Username PasswordHash) sig m,
-             MonadIO m)
+               (KVStore Username PasswordHash) sig m)
          => m ()
 example1 = do
-  regist (Username "yang") (Password "12345") >>= liftIO . print
-  regist (Username "yang1") (Password "12345678") >>= liftIO . print
-  loggin (Username "yang") (Password "12345") >>= liftIO . print
+  regist (Username "yang") (Password "12345")
+  regist (Username "yang1") (Password "12345678")
+  loggin (Username "yang") (Password "12345")
+  return ()
 
 runExample1  = do
-  gen <- CR.getSystemDRG
-  runCryptoHash gen $ KVP.runKVStore example1
+  let seed = seedFromInteger 10
+      cdrg = CR.drgNewSeed seed
+  run $ runCryptoHash cdrg $ KVP.runKVStore example1
 
 dbFile :: FilePath
 dbFile = "password.db"
@@ -98,6 +102,7 @@ withPasswordDBConnection f = SQL.withConnection dbFile $ \conn -> do
 
 runExample2 :: IO ()
 runExample2 = do
-  gen <- CR.getSystemDRG
+  let seed = seedFromInteger 10
+      cdrg = CR.drgNewSeed seed
   withPasswordDBConnection $ \conn -> do
-    runCryptoHash gen $ KVS.runKVStore conn example1
+    runCryptoHash cdrg $ KVS.runKVStore conn example1
