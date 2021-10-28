@@ -80,12 +80,11 @@ loggin username password =  do
 example1 :: (Has CryptoHash sig m,
              HasLabelled KVStore
                (KVStore Username PasswordHash) sig m)
-         => m ()
+         => m Bool
 example1 = do
   regist (Username "yang") (Password "12345")
   regist (Username "yang1") (Password "12345678")
   loggin (Username "yang") (Password "12345")
-  return ()
 
 runExample1  = do
   let seed = seedFromInteger 10
@@ -105,4 +104,5 @@ runExample2 = do
   let seed = seedFromInteger 10
       cdrg = CR.drgNewSeed seed
   withPasswordDBConnection $ \conn -> do
-    runCryptoHash cdrg $ KVS.runKVStore conn example1
+    res <- runCryptoHash cdrg $ KVS.runKVStore conn example1
+    print res
