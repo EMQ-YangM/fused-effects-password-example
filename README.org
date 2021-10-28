@@ -1,0 +1,232 @@
+** fused-effects-password-example 直观展示代数副作用系统的作用
+*** 原始版本  https://haskell-explained.gitlab.io/blog/posts/2019/07/28/polysemy-is-cool-part-1/index.html
+*** 密码管理器
+  1. 安全地存储用户名和密码
+  2. 将用户名和密码添加到密码存储中
+  3. 并检查给定的用户名和密码组合是否有效
+*** 规范
+#+begin_src haskell
+  addUser username password = do
+       hashedPassword <- makeHash password
+       insertInStore username hashedPassword
+
+  validatePassword username password = do
+       hashInStore <- lookupInStore username
+       case hashInStore of
+         Just h  -> validateHash password h
+         Nothing -> return False
+#+end_src
+  1. 要添加用户，您需要对密码进行hash并将用户名和哈希值插入到某种存储中。
+  2. 要验证密码，首先要在存储中查找用户对应的哈希值，然后验证给定的密码是否与哈希值匹配。
+*** 分解为两种效果
+  1. CryptoHash: makeHash validateHash, 解决hash的产生和验证
+  2. KeyValueStore: insertInStore lookupInStore, 解决kv的存储和读取
+**** CryptoHash
+  从输入生成散列通常是一个纯函数。
+  但是一个好的散列方案也会添加一个随机生成的盐来避免彩虹表攻击
+  添加随机盐会让它变成一个有内部状态的副作用。
+**** KeyValueStore
+  Key Value是一个更通用的抽象，我们这里定义抽象的接口。
+*** 定义接口
+**** CRYPTOHASH
+#+begin_src haskell
+  -----------------------------------------------------
+  newtype Username = Username ByteString
+    deriving (Eq, Ord, Show, ToField, IsString)
+
+  newtype Password = Password ByteString
+    deriving (Eq, Ord, Show, Semigroup, Monoid, ByteArrayAccess, ByteArray, IsString)
+
+  newtype PasswordHash = PasswordHash ByteString
+    deriving (Eq, Ord, Show, Semigroup, Monoid, ByteArrayAccess, ByteArray, ToField, FromField)
+
+  ---------------------------------------------------
+  data CryptoHash (m :: Type -> Type) a where
+
+    MakeHash :: Password  -> CryptoHash m PasswordHash
+    ValidateHash :: Password -> PasswordHash -> CryptoHash m Bool
+
+  makeHash :: Has CryptoHash sig m => Password -> m PasswordHash
+  makeHash  = send . MakeHash
+
+  validateHash :: Has CryptoHash sig m => Password -> PasswordHash -> m Bool
+  validateHash ps psh = send (ValidateHash ps psh)
+#+end_src
+**** KeyValueStore
+#+begin_src haskell
+  data KVStore k v (m :: Type -> Type) a where
+    LookupKV :: k -> KVStore k v m (Maybe v)
+    UpdateKV :: k -> v -> KVStore k v m ()
+
+  lookupKV :: HasLabelled KVStore (KVStore k v) sig m => k -> m (Maybe v)
+  lookupKV = sendLabelled @KVStore  . LookupKV
+
+  updateKV :: HasLabelled KVStore (KVStore k v) sig m => k -> v -> m ()
+  updateKV k v = sendLabelled @KVStore (UpdateKV k v)
+#+end_src
+*** 实现接口
+**** CRYPTOHASH
+#+begin_src haskell
+
+  newtype CryptoHashC gen m a = CryptoHashC { runCryptoHashC :: StateC gen m a }
+    deriving (Functor, Applicative, Monad, MonadIO)
+
+  instance (Algebra sig m, CR.DRG gen) => Algebra (CryptoHash :+: sig ) (CryptoHashC gen m) where
+    alg hdl sig ctx = CryptoHashC $ case sig of
+      L (ValidateHash password hash) -> pure (BCrypt.validatePassword password hash  <$ ctx )
+      L (MakeHash password) -> do
+        drg <- get @gen
+        let (hash, drg') = CR.withDRG drg (BCrypt.hashPassword 5 password)
+        put drg'
+        pure (hash <$ ctx)
+      R other -> alg (runCryptoHashC . hdl) (R other) ctx
+
+  runCryptoHash :: forall gen m a. Functor m => gen -> CryptoHashC gen m a -> m a
+  runCryptoHash gen f = evalState @gen gen $ runCryptoHashC f
+#+end_src
+**** KeyValueStore
+***** Pure
+#+begin_src haskell
+  newtype KVStoreC k v m a = KVStoreC { runKVStoreC :: StateC (Map k v) m a }
+    deriving (Functor, Applicative, Monad, MonadIO)
+
+  instance (Algebra sig m, Ord k) => Algebra (KVStore k v :+: sig ) (KVStoreC k v m) where
+    alg hdl sig ctx = KVStoreC $ case sig of
+      L (LookupKV k)   -> (<$ ctx) <$> gets (Map.lookup k)
+      L (UpdateKV k v) -> modify (Map.insert k v) >> pure ctx
+      R other          -> alg (runKVStoreC . hdl) (R other) ctx
+
+  runKVStore :: (Monad m, Ord k)
+             => Labelled KVStore (KVStoreC k v) m a
+             -> m (Map k v, a)
+  runKVStore = runState mempty . runKVStoreC . runLabelled
+#+end_src
+***** SQLite
+#+begin_src haskell
+  newtype KVStoreC k v m a = KVStoreC { runKVStoreC :: ReaderC SQL.Connection m a }
+    deriving (Functor, Applicative, Monad, MonadIO)
+
+  instance (Algebra sig m, MonadIO m, ToField k, ToField v, FromField v) =>
+   Algebra (KVStore k v :+: sig ) (KVStoreC k v m) where
+    alg hdl sig ctx = KVStoreC $ case sig of
+      L (LookupKV k)   -> do
+        conn <- ask
+        hashes <- liftIO $ SQL.queryNamed conn
+                     "SELECT hash FROM passwords WHERE username = :username"
+                       [":username" := k]
+        pure ((SQL.fromOnly <$> listToMaybe hashes) <$ ctx)
+      L (UpdateKV k v) -> do
+        let (query, params) = ("INSERT INTO passwords (username, hash) VALUES (:username, :hash) "
+                                 <> "ON CONFLICT (username) DO UPDATE SET hash = excluded.hash"
+                              ,[":username" := k, ":hash" := v])
+        conn <- ask
+        liftIO $ SQL.executeNamed conn query params
+        pure ctx
+      R other          -> alg (runKVStoreC . hdl) (R other) ctx
+
+  runKVStore :: Monad m
+             => SQL.Connection
+             -> Labelled KVStore (KVStoreC k v) m a
+             -> m a
+  runKVStore conn f = runReader conn $ runKVStoreC $ runLabelled f
+#+end_src
+*** 将副作用用于代码
+#+begin_src haskell
+  addUser ::(Has CryptoHash sig m,
+             HasLabelled KVStore
+               (KVStore Username PasswordHash) sig m)
+          => Username
+          -> Password
+          -> m ()
+  addUser username password = do
+    hashedPassword <- makeHash password
+    updateKV username hashedPassword
+
+  validatePassword ::(Has CryptoHash sig m,
+                      HasLabelled KVStore
+                        (KVStore Username PasswordHash) sig m)
+                   => Username
+                   -> Password
+                   -> m Bool
+  validatePassword username password = do
+    hashed <- lookupKV username
+    case hashed of
+      Nothing -> pure False
+      Just h  -> validateHash password h
+#+end_src
+*** 注册，登陆例子
+#+begin_src haskell
+  regist ::(Has CryptoHash sig m,
+            HasLabelled KVStore
+               (KVStore Username PasswordHash) sig m)
+         => Username
+         -> Password
+         -> m (Either String ())
+  regist username password = do
+    v <- lookupKV username
+    case v of
+      Just _  -> pure (Left $ show username ++  " exist")
+      Nothing -> do
+        passwordHash <- makeHash password
+        updateKV username passwordHash
+        return (Right ())
+
+  loggin :: (Has CryptoHash sig m,
+             HasLabelled KVStore
+               (KVStore Username PasswordHash) sig m)
+         => Username
+         -> Password
+         -> m Bool
+  loggin username password =  do
+    v <- lookupKV username
+    case v of
+      Nothing           -> pure False
+      Just passwordHash -> validateHash password passwordHash
+
+
+  example1 :: (Has CryptoHash sig m,
+               HasLabelled KVStore
+                 (KVStore Username PasswordHash) sig m,
+               MonadIO m)
+           => m Bool
+  example1 = do
+    regist (Username "yang") (Password "12345")
+    regist (Username "yang1") (Password "12345678")
+    loggin (Username "yang") (Password "12345")
+    
+#+end_src
+*** 运行例子
+#+begin_src haskell
+
+  import qualified KVStoreImplPure         as KVP
+  import qualified KVStoreImplSQLite       as KVS
+
+  runExample1 :: (Map Username PasswordHash, Bool)
+  runExample1  = do
+    let seed = seedFromInteger 10
+        cdrg = CR.drgNewSeed seed
+    run $ runCryptoHash cdrg $ KVP.runKVStore example1
+
+  dbFile :: FilePath
+  dbFile = "password.db"
+
+  withPasswordDBConnection :: (SQL.Connection -> IO a) -> IO a
+  withPasswordDBConnection f = SQL.withConnection dbFile $ \conn -> do
+    SQL.execute_ conn "CREATE TABLE IF NOT EXISTS passwords (username TEXT PRIMARY KEY, hash TEXT)"
+    f conn
+
+  runExample2 :: IO ()
+  runExample2 = do
+    let seed = seedFromInteger 10
+        cdrg = CR.drgNewSeed seed
+    withPasswordDBConnection $ \conn -> do
+      res <- runCryptoHash cdrg $ KVS.runKVStore conn example1
+      print res
+#+end_src
+
+**** runExample1
+#+begin_src shell
+(fromList [(Username "yang",PasswordHash "$2b$05$/I2Zt6CBJI5sWiNRhffQAeTkQYPNdfLpxgbkZvs.jG0wD7iW3Nfl2"),
+           (Username "yang1",PasswordHash "$2b$05$jrmIoVWpqIhN699g5qbFCuaNITKSKvNb550eHBsfHZgFtDXGkGtYK")],True)
+#+end_src
+**** runExample2

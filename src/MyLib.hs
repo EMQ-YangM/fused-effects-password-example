@@ -11,12 +11,12 @@ import           Control.Monad.IO.Class
 import           Crypto.Random           (seedFromInteger)
 import qualified Crypto.Random           as CR
 import           CryptoHash
+import           Data.Map                (Map)
 import qualified Database.SQLite.Simple  as SQL
 import           KVStore
 import qualified KVStoreImplPure         as KVP
 import qualified KVStoreImplSQLite       as KVS
 import           Types
-
 
 -- addUser username password = do
 --     hashedPassword <- makeHash password
@@ -86,6 +86,7 @@ example1 = do
   regist (Username "yang1") (Password "12345678")
   loggin (Username "yang") (Password "12345")
 
+runExample1 :: (Map Username PasswordHash, Bool)
 runExample1  = do
   let seed = seedFromInteger 10
       cdrg = CR.drgNewSeed seed
