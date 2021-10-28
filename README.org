@@ -1,5 +1,5 @@
 ** fused-effects-password-example 直观展示代数副作用系统的作用
-*** 原始版本  https://haskell-explained.gitlab.io/blog/posts/2019/07/28/polysemy-is-cool-part-1/index.html
+**** 原文  https://haskell-explained.gitlab.io/blog/posts/2019/07/28/polysemy-is-cool-part-1/index.html
 *** 密码管理器
   1. 安全地存储用户名和密码
   2. 将用户名和密码添加到密码存储中
