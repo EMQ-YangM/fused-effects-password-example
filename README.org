@@ -2,8 +2,7 @@
 **** 原文  https://haskell-explained.gitlab.io/blog/posts/2019/07/28/polysemy-is-cool-part-1/index.html
 *** 密码管理器
   1. 安全地存储用户名和密码
-  2. 将用户名和密码添加到密码存储中
-  3. 并检查给定的用户名和密码组合是否有效
+  2. 检查给定的用户名和密码组合是否有效
 *** 规范
 #+begin_src haskell
   addUser username password = do
