@@ -15,7 +15,7 @@
          Just h  -> validateHash password h
          Nothing -> return False
 #+end_src
-  1. 要添加用户，您需要对密码进行hash并将用户名和哈希值插入到某种存储中。
+  1. 要添加用户，您需要对密码进行哈希计算并将用户名和哈希值插入到某种存储中。
   2. 要验证密码，首先要在存储中查找用户对应的哈希值，然后验证给定的密码是否与哈希值匹配。
 *** 分解为两种效果
   1. CryptoHash: makeHash validateHash, 解决hash的产生和验证
