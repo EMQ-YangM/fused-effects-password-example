@@ -41,7 +41,6 @@
 
   ---------------------------------------------------
   data CryptoHash (m :: Type -> Type) a where
-
     MakeHash :: Password  -> CryptoHash m PasswordHash
     ValidateHash :: Password -> PasswordHash -> CryptoHash m Bool
 
