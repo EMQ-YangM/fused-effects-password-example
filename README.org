@@ -224,7 +224,10 @@
 
 **** runExample1
 #+begin_src shell
-(fromList [(Username "yang",PasswordHash "$2b$05$/I2Zt6CBJI5sWiNRhffQAeTkQYPNdfLpxgbkZvs.jG0wD7iW3Nfl2"),
-           (Username "yang1",PasswordHash "$2b$05$jrmIoVWpqIhN699g5qbFCuaNITKSKvNb550eHBsfHZgFtDXGkGtYK")],True)
+          (fromList
+            [(Username "yang",PasswordHash "$2b$05$/I2Zt6CBJI5sWiNRhffQAeTkQYPNdfLpxgbkZvs.jG0wD7iW3Nfl2"),
+             (Username "yang1",PasswordHash "$2b$05$jrmIoVWpqIhN699g5qbFCuaNITKSKvNb550eHBsfHZgFtDXGkGtYK")
+            ]
+           , True)
 #+end_src
 **** runExample2
