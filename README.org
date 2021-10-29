@@ -184,8 +184,7 @@
 
   example1 :: (Has CryptoHash sig m,
                HasLabelled KVStore
-                 (KVStore Username PasswordHash) sig m,
-               MonadIO m)
+                 (KVStore Username PasswordHash) sig m)
            => m Bool
   example1 = do
     regist (Username "yang") (Password "12345")
